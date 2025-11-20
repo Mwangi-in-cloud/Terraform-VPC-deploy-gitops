@@ -1,76 +1,54 @@
 name: "Terraform"
-
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose Terraform action"
+        required: true
+        type: choice
+        options:
+          - plan
+          - destroy
 
 jobs:
   terraform:
-    name: "Terraform"
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v1
+        uses: hashicorp/setup-terraform@v2
 
-      - name: Terraform Format
-        id: fmt
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform FMT
         run: terraform fmt -check
 
       - name: Terraform Init
-        id: init
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Validate
-        id: validate
         run: terraform validate -no-color
 
       - name: Terraform Plan
-        id: plan
-        if: github.event_name == 'pull_request'
-        run: terraform plan -no-color -input=false
-        continue-on-error: true
+        if: ${{ github.event.inputs.action == 'plan' }}
+        run: terraform plan -input=false
 
-      - name: Update Pull Request
-        uses: actions/github-script@v6
-        if: github.event_name == 'pull_request'
-        env:
-          PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
-            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
-            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
-            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
-
-            <details><summary>Show Plan</summary>
-
-            \`\`\`\n
-            ${process.env.PLAN}
-            \`\`\`
-
-            </details>
-
-            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            })
-
-      - name: Terraform Plan Status
-        if: steps.plan.outcome == 'failure'
-        run: exit 1
+      - name: Terraform Destroy Plan
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: terraform plan -destroy -input=false
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event.inputs.action == 'plan' && github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve -input=false
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy' && github.ref == 'refs/heads/main'
+        run: terraform destroy -auto-approve -input=false
